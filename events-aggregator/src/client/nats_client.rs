@@ -6,10 +6,16 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+/// NATS Manager handles all interactions with the NATS server, including connection management,
+/// JetStream consumer setup, and core NATS subscription. It implements robust retry strategies
+/// with capped exponential backoff to ensure resilience against transient failures and network issues.
 pub struct NatsManager {
     client: async_nats::Client,
 }
 
+/// UnifiedMessage is an enum that abstracts over the two types of messages we can receive:
+/// - JetStream messages, which come from the pull consumer and have different acknowledgment semantics.
+/// - Core NATS messages, which come from a standard subscription.
 pub enum UnifiedMessage {
     JetStream(async_nats::jetstream::Message),
     Core(async_nats::Message),
@@ -19,6 +25,14 @@ pub enum UnifiedMessage {
 const JETSTREAM_CONSUMER_NAME: &str = "events-aggregator-consumer";
 // JetStream stream name (used for lookup and validation)
 const JETSTREAM_STREAM_NAME: &str = "events-stream";
+
+// Timeouts and retry configuration constants
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+// Maximum number of retry attempts for critical operations before giving up and exiting.
+const MAX_ATTEMPTS: u32 = 10;
+const MAX_BACKOFF_ATTEMPTS: u32 = 6;
 
 // NATS Manager Implementation
 // 1. Connection Management with Strict Timeouts and Retry Strategy
@@ -30,7 +44,8 @@ impl NatsManager {
     // Starts at 500ms for attempt=1, doubles each subsequent attempt, caps at 30 seconds.
     fn calculate_backoff_delay(attempt: u32) -> u64 {
         let base_delay = 500u64;
-        let exponential_delay = base_delay << std::cmp::min(attempt.saturating_sub(1), 6);
+        let exponential_delay =
+            base_delay << std::cmp::min(attempt.saturating_sub(1), MAX_BACKOFF_ATTEMPTS);
         std::cmp::min(exponential_delay, 30000)
     }
 
@@ -40,13 +55,14 @@ impl NatsManager {
         tokio::time::sleep(Duration::from_millis(delay)).await;
     }
 
-    pub async fn new(url: &str) -> anyhow::Result<Self> {
-        info!("Attempting to connect to NATS at {}...", url);
+    /// Establish a connection to the NATS server with strict timeouts and a robust retry strategy.
+    pub async fn new(url: &str) -> Result<Self, async_nats::Error> {
+        info!("Attempting to connect to NATS at {url}...");
 
         // Configure native NATS backoff and retries
         let options = async_nats::ConnectOptions::new()
-            .connection_timeout(Duration::from_secs(1))
-            .request_timeout(Some(Duration::from_secs(5)))
+            .connection_timeout(CONNECTION_TIMEOUT)
+            .request_timeout(Some(REQUEST_TIMEOUT))
             // Enable retries on initial connection failure
             .retry_on_initial_connect()
             .reconnect_delay_callback(|attempts| {
@@ -59,12 +75,13 @@ impl NatsManager {
 
         // A single deterministic connect call. It will inherently respect
         // the timeouts and backoffs configured above without race conditions.
-        let client = options.connect(url).await.map_err(|e| {
-            anyhow::anyhow!("Failed to connect to NATS after configured attempts: {}", e)
-        })?;
+        let client = options.connect(url).await?;
 
         Ok(Self { client })
     }
+
+    /// Start subscribing to the specified subject. If JetStream is enabled,
+    /// it will set up a pull consumer with retry support.
     pub async fn start_subscribing(
         &self,
         subject: String,
@@ -85,14 +102,13 @@ impl NatsManager {
         Ok(())
     }
 
-    // JetStream Consumer Setup with Backpressure Handling
+    // JetStream Consumer Setup with Robust Retry Logic and Backoff
     async fn setup_jetstream(
         &self,
         subject: String,
         tx: mpsc::Sender<UnifiedMessage>,
     ) -> anyhow::Result<()> {
         let js = async_nats::jetstream::new(self.client.clone());
-        const MAX_ATTEMPTS: u32 = 10;
         let mut attempt = 0;
 
         let consumer = loop {
@@ -123,11 +139,7 @@ impl NatsManager {
                 continue;
             }
 
-            match tokio::time::timeout(
-                Duration::from_millis(1500),
-                js.get_stream(JETSTREAM_STREAM_NAME),
-            )
-            .await
+            match tokio::time::timeout(REQUEST_TIMEOUT, js.get_stream(JETSTREAM_STREAM_NAME)).await
             {
                 Ok(Ok(stream)) => match stream
                     .get_or_create_consumer(
@@ -248,7 +260,6 @@ impl NatsManager {
     ) -> anyhow::Result<()> {
         let client = self.client.clone();
         tokio::spawn(async move {
-            const MAX_ATTEMPTS: u32 = 10;
             let mut attempt = 0;
 
             loop {
