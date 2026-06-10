@@ -15,6 +15,9 @@ pub const BATCH_TIMEOUT_MS: u64 = 10000; // 10 seconds
 /// Maximum number of write retries before failing the exporter operation.
 pub const MAX_RETRIES: usize = 3;
 
+/// Default service name used for tracing and application identification.
+pub const SERVICE_NAME: &str = "events-aggregator";
+
 /// Default JetStream consumer name used for event subscriptions.
 pub const JETSTREAM_CONSUMER_NAME: &str = "events-aggregator-consumer";
 

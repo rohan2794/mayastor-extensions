@@ -10,9 +10,8 @@ use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
 use url::Url;
-use utils::{package_description, version_info_str};
+use utils::{package_description, tracing_telemetry::TracingTelemetry, version_info_str};
 
 /// Result of message processing.
 /// `Ok` = successfully processed, ACK the message
@@ -64,10 +63,8 @@ impl CliArgs {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize structured logging with tracing-subscriber
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .init();
+    // Initialize structured logging with shared utils tracing telemetry
+    TracingTelemetry::builder().init(constant::SERVICE_NAME);
     let cli_args = CliArgs::args();
 
     // Setup Internal Channel
