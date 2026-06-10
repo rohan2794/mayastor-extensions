@@ -1,9 +1,11 @@
 mod client;
+mod constant;
 mod exporter;
 use async_nats::jetstream::message::AckKind;
 use clap::Parser;
 use client::nats_client::{NatsManager, UnifiedMessage};
-use exporter::{parse_dir_size_limit, LogEvent};
+use constant::{CHANNEL_CAPACITY, MAX_NON_JSON_PAYLOAD_LOG_BYTES};
+use exporter::{dir_size_limit, LogEvent};
 use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -17,19 +19,14 @@ use utils::{package_description, version_info_str};
 /// `Err(Transient)` = processing failed but might succeed on retry, NAK the message
 /// `Err(Permanent)` = unrecoverable failure (e.g., invalid JSON), ACK and discard
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 enum ProcessingResult {
     Success,
     TransientFailure,
     PermanentFailure,
 }
 
-/// channel capacity for both internal unified message channel and exporter channel;
-const CHANNEL_CAPACITY: usize = 512;
-
 // Command-line arguments for the event aggregator, parsed using clap. This includes NATS connection details,
-// JetStream mode toggle, optional Loki endpoint for exporting, and subject filter for subscriptions.
-// The `loki_url` is optional; if not provided, the aggregator will default to writing events to an ephemeral volume as JSON files.
+// JetStream mode toggle, local file export options, and subject filter for subscriptions.
 #[derive(Parser)]
 #[command(name = package_description!(), version = version_info_str!())]
 struct CliArgs {
@@ -41,28 +38,22 @@ struct CliArgs {
     #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
     jetstream_enabled: bool,
 
-    /// Endpoint of LOKI service, if left empty then it will try to parse endpoint
-    /// from Loki service(K8s service resource), if the tool is unable to parse
-    /// from service then logs will be collected using Kube-apiserver
-    #[arg(global = true, short, long)]
-    loki_endpoint: Option<Url>,
-
-    /// The tenant id to be used to query loki logs.
-    #[arg(global = true, long, default_value = "openebs")]
-    tenant_id: String,
+    /// Enable Loki-related mode. When enabled, events will not be exported to disk.
+    #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+    loki_enabled: bool,
 
     // events subject filter
     #[arg(long, default_value = "events.>")]
     subject_filter: String,
 
-    /// Local events directory for file exporter. Required when `--loki-url` is not provided.
+    /// Local events directory for file exporter. Required when `--loki-enabled` is false.
     #[arg(long, short)]
     events_dir: Option<String>,
 
     /// Maximum total size for local event files under `--events-dir`, including rotated history.
     /// Supports human-readable units such as KiB, MiB, GiB, KB, MB, GB, bytes, and decimal values like 1.5GiB.
-    /// Required when `--loki-url` is not provided.
-    #[arg(long, short, value_parser = parse_dir_size_limit)]
+    /// Required when `--loki-enabled` is false.
+    #[arg(long, short, value_parser = dir_size_limit)]
     dir_size_limit: Option<usize>,
 }
 impl CliArgs {
@@ -92,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize NATS Manager
     let nats_mgr = NatsManager::new(cli_args.nats_url.as_str())
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to NATS: {}", e))?;
+        .map_err(|error| anyhow::anyhow!("Failed to connect to NATS: {error}"))?;
     nats_mgr
         .start_subscribing(cli_args.subject_filter, cli_args.jetstream_enabled, tx)
         .await?;
@@ -100,18 +91,15 @@ async fn main() -> anyhow::Result<()> {
     let (tx_exporter, rx_exporter) = mpsc::channel::<LogEvent>(CHANNEL_CAPACITY);
 
     // Select exporter mode and spawn background exporter task.
-    let exporter_mode = if let Some(url) = cli_args.loki_endpoint.clone() {
-        exporter::ExporterMode::Loki {
-            url: url.to_string(),
-            client: reqwest::Client::new(),
-        }
+    let exporter_mode = if cli_args.loki_enabled {
+        exporter::ExporterMode::Disabled
     } else {
         let events_dir = cli_args.events_dir.clone().ok_or_else(|| {
-            anyhow::anyhow!("--events-dir is required when --loki-url is not provided")
+            anyhow::anyhow!("--events-dir is required when --loki-enabled is false")
         })?;
 
         let size_limit = cli_args.dir_size_limit.ok_or_else(|| {
-            anyhow::anyhow!("--dir-size-limit is required when --loki-url is not provided")
+            anyhow::anyhow!("--dir-size-limit is required when --loki-enabled is false")
         })?;
 
         tracing::info!(
@@ -220,42 +208,49 @@ fn process_message(
                 },
             });
 
-            // Console: pretty / colored multi-line output for humans.
-            match colored_json::to_colored_json_auto(&log_line) {
-                Ok(colored_str) => {
-                    info!("\n{colored_str}\n");
+            // Console and storage: use compact single-line JSON output.
+            match serde_json::to_string(&log_line) {
+                Ok(compact) => {
+                    if let Some(tx) = tx_exporter {
+                        let compact_log = compact.clone();
+                        match tx.try_send(LogEvent { line: compact }) {
+                            Ok(()) => {
+                                info!("{compact_log}");
+                                return ProcessingResult::Success;
+                            }
+                            Err(e) => match e {
+                                tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                                    warn!(
+                                        subject = %subject_str,
+                                        error = %e,
+                                        compact_log = %compact_log,
+                                        "Exporter channel full; retrying message later"
+                                    );
+                                    return ProcessingResult::TransientFailure;
+                                }
+                                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                                    warn!(
+                                        subject = %subject_str,
+                                        error = %e,
+                                        compact_log = %compact_log,
+                                        "Exporter channel closed; treating this message as permanent failure"
+                                    );
+                                    return ProcessingResult::PermanentFailure;
+                                }
+                            },
+                        }
+                    } else {
+                        info!("{compact}");
+                    }
                 }
-                Err(err) => {
+                Err(serialize_err) => {
                     warn!(
                         subject = %subject_str,
-                        error = %err,
-                        "Failed to format event as colored JSON; falling back to plain JSON"
+                        error = %serialize_err,
+                        log_line = %log_line,
+                        "Failed to serialize event for compact JSON output"
                     );
-                    match serde_json::to_string_pretty(&log_line) {
-                        Ok(plain_json) => {
-                            info!("\n{plain_json}\n");
-                        }
-                        Err(serialize_err) => {
-                            warn!(
-                                subject = %subject_str,
-                                error = %serialize_err,
-                                "Failed to serialize event for plain JSON console output"
-                            );
-                        }
-                    }
-                }
-            }
-
-            // Prepare compact single-line JSON for crash-safe file storage / Loki ingestion.
-            if let Ok(compact) = serde_json::to_string(&log_line) {
-                if let Some(tx) = tx_exporter {
-                    // Use non-blocking try_send to avoid awaiting in this sync handler.
-                    if let Err(e) = tx.try_send(LogEvent {
-                        subject: subject_str.to_string(),
-                        line: compact,
-                    }) {
-                        warn!(subject = %subject_str, error = %e, "Exporter channel full or closed; dropping event for exporter");
-                    }
+                    return ProcessingResult::PermanentFailure;
                 }
             }
 
@@ -263,7 +258,6 @@ fn process_message(
             ProcessingResult::Success
         }
         Err(e) => {
-            const MAX_NON_JSON_PAYLOAD_LOG_BYTES: usize = 4096;
             let payload_size_bytes = payload_bytes.len();
 
             // Safely truncate at UTF-8 boundary to avoid splitting multi-byte characters

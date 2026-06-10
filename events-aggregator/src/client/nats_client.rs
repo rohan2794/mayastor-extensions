@@ -1,3 +1,7 @@
+use crate::constant::{
+    CONNECTION_TIMEOUT, JETSTREAM_CONSUMER_NAME, JETSTREAM_STREAM_NAME, MAX_ATTEMPTS,
+    MAX_BACKOFF_ATTEMPTS, REQUEST_TIMEOUT,
+};
 use anyhow::bail;
 use async_nats::jetstream::consumer::pull;
 use futures::StreamExt;
@@ -20,19 +24,6 @@ pub enum UnifiedMessage {
     JetStream(async_nats::jetstream::Message),
     Core(async_nats::Message),
 }
-
-// JetStream consumer name (used for both lookup and durable identity)
-const JETSTREAM_CONSUMER_NAME: &str = "events-aggregator-consumer";
-// JetStream stream name (used for lookup and validation)
-const JETSTREAM_STREAM_NAME: &str = "events-stream";
-
-// Timeouts and retry configuration constants
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-
-// Maximum number of retry attempts for critical operations before giving up and exiting.
-const MAX_ATTEMPTS: u32 = 10;
-const MAX_BACKOFF_ATTEMPTS: u32 = 6;
 
 // NATS Manager Implementation
 // 1. Connection Management with Strict Timeouts and Retry Strategy

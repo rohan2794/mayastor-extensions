@@ -1,8 +1,9 @@
-use byte_unit::Byte;
+use crate::constant::{BATCH_MAX_SIZE, BATCH_TIMEOUT_MS, EVENTS_JSON_FILE, MAX_RETRIES};
+use parse_size::parse_size;
 use std::{
     io::Write,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
@@ -10,44 +11,27 @@ use tokio_util::time::delay_queue::{DelayQueue, Key};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::MakeWriter;
 
-// Configuration constants for batch processing and retry logic.
-pub const BATCH_MAX_SIZE: usize = 100;
-pub const BATCH_TIMEOUT_MS: u64 = 10000; // 10 seconds
-
 /// Parse a CLI directory size limit string into a `usize` byte count.
 /// Supports human-readable values such as `10MiB`, `1.5GiB`, `10000`, and `8 KB`.
-pub fn parse_dir_size_limit(value: &str) -> Result<usize, String> {
-    let parsed =
-        Byte::parse_str(value, true).map_err(|e| format!("invalid size '{value}': {e}"))?;
-    parsed
-        .as_u64_checked()
-        .ok_or_else(|| format!("size limit '{value}' exceeds usize maximum"))
+pub fn dir_size_limit(value: &str) -> Result<usize, String> {
+    parse_size(value)
+        .map_err(|e| format!("invalid size '{value}': {e}"))
         .and_then(|bytes| {
             usize::try_from(bytes)
                 .map_err(|_| format!("size limit '{value}' exceeds usize maximum"))
         })
 }
-const MAX_RETRIES: usize = 3;
-const APPLICATION_NAME: &str = "events-aggregator";
-
 /// A single event produced by the aggregator pipeline.
-/// `subject` is used as the Loki stream label, while `line` is the payload.
+/// `line` contains crash-safe JSON for file export.
 #[derive(Debug)]
 pub struct LogEvent {
-    pub subject: String,
     pub line: String,
 }
 
-/// ExporterMode defines the target destination for log events, either Loki or a local file.
+/// ExporterMode defines the target destination for log events, either file storage or disabled mode.
 pub enum ExporterMode {
-    Loki {
-        url: String,
-        client: reqwest::Client,
-    },
-    File {
-        dir: PathBuf,
-        size_limit: usize,
-    },
+    Disabled,
+    File { dir: PathBuf, size_limit: usize },
 }
 
 /// Main exporter loop that receives log events, batches them, and flushes to the
@@ -59,8 +43,10 @@ pub async fn run_exporter(mode: ExporterMode, mut rx: mpsc::Receiver<LogEvent>) 
 
     // Choose destination mode and log the configured target.
     match &mode {
-        ExporterMode::Loki { url, .. } => {
-            tracing::info!(target_url = %url, "Batch Exporter in Loki-only mode.")
+        ExporterMode::Disabled => {
+            tracing::info!(
+                "Batch Exporter in disabled mode; events will be consumed but not written."
+            )
         }
         ExporterMode::File { dir, .. } => {
             tracing::info!(target_path = ?dir, "Batch Exporter in File-only mode.")
@@ -132,7 +118,7 @@ async fn flush_batch_with_retry(mode: &ExporterMode, batch: &mut Vec<LogEvent>) 
     let mut success = false;
 
     let dest = match mode {
-        ExporterMode::Loki { .. } => "loki",
+        ExporterMode::Disabled => "disabled",
         ExporterMode::File { .. } => "file",
     };
 
@@ -146,7 +132,7 @@ async fn flush_batch_with_retry(mode: &ExporterMode, batch: &mut Vec<LogEvent>) 
     // Retry on transient failures using exponential backoff.
     while attempts < MAX_RETRIES {
         let result = match mode {
-            ExporterMode::Loki { url, client } => ship_to_loki(client, url, batch).await,
+            ExporterMode::Disabled => Ok(()),
             ExporterMode::File { dir, size_limit } => write_to_disk(dir, *size_limit, batch).await,
         };
 
@@ -191,55 +177,6 @@ async fn flush_batch_with_retry(mode: &ExporterMode, batch: &mut Vec<LogEvent>) 
     );
 }
 
-// Ship a batch of log events to Loki using the push API. Each event is sent as a
-// separate stream entry with the subject as a label.
-async fn ship_to_loki(
-    client: &reqwest::Client,
-    url: &str,
-    batch: &[LogEvent],
-) -> anyhow::Result<()> {
-    let push_endpoint = format!("{}/loki/api/v1/push", url.trim_end_matches('/'));
-
-    // Build one Loki stream entry per log event.
-    let mut streams = serde_json::json!([]);
-    for event in batch {
-        // Use a fresh timestamp per event to preserve ordering and timing.
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-            .to_string();
-        streams.as_array_mut().unwrap().push(serde_json::json!({
-            "stream": { "app": APPLICATION_NAME, "subject": event.subject },
-            "values": [ [ timestamp.as_str(), event.line ] ]
-        }));
-    }
-
-    let body = serde_json::json!({ "streams": streams });
-
-    // Build the request with the required multi-tenant header
-    let response = client
-        .post(&push_endpoint)
-        .header("X-Scope-OrgID", "openebs")
-        .json(&body)
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let err_body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown API error payload".to_string());
-        return Err(anyhow::anyhow!(
-            "Loki rejected packet [Status {}]: {}",
-            status,
-            err_body
-        ));
-    }
-    Ok(())
-}
-
 // Append a batch of log events to a local file, ensuring the target directory exists and handling file I/O asynchronously.
 async fn write_to_disk(dir: &Path, size_limit: usize, batch: &[LogEvent]) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(dir).await?;
@@ -257,10 +194,9 @@ async fn write_to_disk(dir: &Path, size_limit: usize, batch: &[LogEvent]) -> any
     rotate_file_if_needed(dir, size_limit, pending).await?;
 
     let dir = dir.to_path_buf();
-    let buffer = buffer.clone();
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        let appender = RollingFileAppender::new(Rotation::NEVER, dir, "events.json");
+        let appender = RollingFileAppender::new(Rotation::NEVER, dir, EVENTS_JSON_FILE);
         let mut writer = appender.make_writer();
         writer.write_all(buffer.as_bytes())?;
         writer.flush()?;
@@ -276,7 +212,7 @@ async fn rotate_file_if_needed(
     size_limit: usize,
     pending_bytes: usize,
 ) -> anyhow::Result<()> {
-    let base_path = dir.join("events.json");
+    let base_path = dir.join(EVENTS_JSON_FILE);
     let rotated_path = dir.join("events.1.json");
 
     let current_size = tokio::fs::metadata(&base_path)
