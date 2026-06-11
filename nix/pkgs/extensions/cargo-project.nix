@@ -166,7 +166,7 @@ in
 
   build = { buildType, cargoBuildFlags ? [ ] }:
     if buildAllInOne then
-      builder { inherit buildType; cargoBuildFlags = [ "-p rpc" "-p metrics-exporter" "-p call-home" "-p upgrade" "-p kubectl-plugin" ]; }
+      builder { inherit buildType; cargoBuildFlags = [ "-p rpc" "-p metrics-exporter" "-p call-home" "-p upgrade" "-p kubectl-plugin" "-p events-aggregator" ]; }
     else
       builder { inherit buildType cargoBuildFlags; };
 }
