@@ -370,7 +370,7 @@ dependencies = [
  "serde_json",
  "serde_nanos",
  "serde_repr",
- "thiserror 1.0.68",
+ "thiserror",
  "time",
  "tokio",
  "tokio-rustls 0.26.0",
@@ -784,15 +784,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam-channel"
-version = "0.5.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-utils"
 version = "0.8.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1156,16 +1147,13 @@ dependencies = [
  "async-nats",
  "clap",
  "futures",
+ "humantime",
  "parse-size",
  "rand",
  "serde",
  "serde_json",
  "tokio",
- "tokio-stream",
- "tokio-util",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "url",
  "utils",
 ]
@@ -2005,7 +1993,7 @@ dependencies = [
  "jsonptr",
  "serde",
  "serde_json",
- "thiserror 1.0.68",
+ "thiserror",
 ]
 
 [[package]]
@@ -2020,7 +2008,7 @@ dependencies = [
  "pest_derive",
  "regex",
  "serde_json",
- "thiserror 1.0.68",
+ "thiserror",
 ]
 
 [[package]]
@@ -2092,7 +2080,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "thiserror 1.0.68",
+ "thiserror",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
@@ -2116,7 +2104,7 @@ dependencies = [
  "serde",
  "serde-value",
  "serde_json",
- "thiserror 1.0.68",
+ "thiserror",
 ]
 
 [[package]]
@@ -2143,7 +2131,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "shutdown",
- "thiserror 1.0.68",
+ "thiserror",
  "tokio",
  "tokio-stream",
  "tower 0.5.1",
@@ -2161,7 +2149,7 @@ dependencies = [
  "kube",
  "kube-forward",
  "openapi",
- "thiserror 1.0.68",
+ "thiserror",
  "tower 0.5.1",
  "url",
  "utils",
@@ -2189,7 +2177,7 @@ dependencies = [
  "pin-project",
  "serde",
  "serde_json",
- "thiserror 1.0.68",
+ "thiserror",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2584,7 +2572,7 @@ dependencies = [
  "js-sys",
  "once_cell",
  "pin-project-lite",
- "thiserror 1.0.68",
+ "thiserror",
 ]
 
 [[package]]
@@ -2612,7 +2600,7 @@ dependencies = [
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost",
- "thiserror 1.0.68",
+ "thiserror",
  "tokio",
  "tonic",
 ]
@@ -2651,7 +2639,7 @@ dependencies = [
  "percent-encoding",
  "rand",
  "serde_json",
- "thiserror 1.0.68",
+ "thiserror",
  "tokio",
  "tokio-stream",
 ]
@@ -2769,7 +2757,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879952a81a83930934cbf1786752d6dedc3b1f29e8f8fb2ad1d0a36f377cf442"
 dependencies = [
  "memchr",
- "thiserror 1.0.68",
+ "thiserror",
  "ucd-trie",
 ]
 
@@ -2941,7 +2929,7 @@ dependencies = [
  "memchr",
  "parking_lot 0.12.3",
  "protobuf",
- "thiserror 1.0.68",
+ "thiserror",
 ]
 
 [[package]]
@@ -3108,7 +3096,7 @@ checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
 dependencies = [
  "getrandom",
  "libredox",
- "thiserror 1.0.68",
+ "thiserror",
 ]
 
 [[package]]
@@ -3215,7 +3203,7 @@ dependencies = [
  "http 1.1.0",
  "reqwest",
  "serde",
- "thiserror 1.0.68",
+ "thiserror",
  "tower-service",
 ]
 
@@ -3872,12 +3860,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "symlink"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
-
-[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3987,16 +3969,7 @@ version = "1.0.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02dd99dc800bbb97186339685293e1cc5d9df1f8fae2d0aecd9ff1c77efea892"
 dependencies = [
- "thiserror-impl 1.0.68",
-]
-
-[[package]]
-name = "thiserror"
-version = "2.0.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
-dependencies = [
- "thiserror-impl 2.0.18",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -4004,17 +3977,6 @@ name = "thiserror-impl"
 version = "1.0.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7c61ec9a6f64d2793d8a45faba21efbe3ced62a886d44c36a009b2b519b4c7e"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.98",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "2.0.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4152,7 +4114,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -4306,19 +4267,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-appender"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
-dependencies = [
- "crossbeam-channel",
- "symlink",
- "thiserror 2.0.18",
- "time",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "tracing-attributes"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4437,7 +4385,7 @@ dependencies = [
  "log",
  "rand",
  "sha1",
- "thiserror 1.0.68",
+ "thiserror",
  "utf-8",
 ]
 

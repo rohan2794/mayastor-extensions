@@ -1,6 +1,5 @@
 use crate::constant::{
-    CONNECTION_TIMEOUT, JETSTREAM_CONSUMER_NAME, JETSTREAM_STREAM_NAME, MAX_ATTEMPTS,
-    MAX_BACKOFF_ATTEMPTS, REQUEST_TIMEOUT,
+    JETSTREAM_CONSUMER_NAME, JETSTREAM_STREAM_NAME, MAX_ATTEMPTS, MAX_BACKOFF_ATTEMPTS,
 };
 use anyhow::bail;
 use async_nats::jetstream::consumer::pull;
@@ -47,13 +46,17 @@ impl NatsManager {
     }
 
     /// Establish a connection to the NATS server with strict timeouts and a robust retry strategy.
-    pub async fn new(url: &str) -> Result<Self, async_nats::Error> {
+    pub async fn new(
+        url: &str,
+        connection_timeout: Duration,
+        request_timeout: Duration,
+    ) -> Result<Self, async_nats::Error> {
         info!("Attempting to connect to NATS at {url}...");
 
         // Configure native NATS backoff and retries
         let options = async_nats::ConnectOptions::new()
-            .connection_timeout(CONNECTION_TIMEOUT)
-            .request_timeout(Some(REQUEST_TIMEOUT))
+            .connection_timeout(connection_timeout)
+            .request_timeout(Some(request_timeout))
             // Enable retries on initial connection failure
             .retry_on_initial_connect()
             .reconnect_delay_callback(|attempts| {
@@ -78,6 +81,7 @@ impl NatsManager {
         subject: String,
         jetstream_enabled: bool,
         tx: mpsc::Sender<UnifiedMessage>,
+        request_timeout: Duration,
     ) -> anyhow::Result<()> {
         // Check the environment-derived flag (e.g., JETSTREAM_ENABLED=true)
         if !jetstream_enabled {
@@ -89,15 +93,16 @@ impl NatsManager {
         }
 
         info!("JetStream is enabled. Booting JetStream consumer with retry support...");
-        self.setup_jetstream(subject, tx).await?;
+        self.setup_jetstream(subject, tx, request_timeout).await?;
         Ok(())
     }
 
-    // JetStream Consumer Setup with Robust Retry Logic and Backoff
+    // JetStream Consumer Setup with Robust Retry Logic and Backoff.
     async fn setup_jetstream(
         &self,
         subject: String,
         tx: mpsc::Sender<UnifiedMessage>,
+        request_timeout: Duration,
     ) -> anyhow::Result<()> {
         let js = async_nats::jetstream::new(self.client.clone());
         let mut attempt = 0;
@@ -130,7 +135,7 @@ impl NatsManager {
                 continue;
             }
 
-            match tokio::time::timeout(REQUEST_TIMEOUT, js.get_stream(JETSTREAM_STREAM_NAME)).await
+            match tokio::time::timeout(request_timeout, js.get_stream(JETSTREAM_STREAM_NAME)).await
             {
                 Ok(Ok(stream)) => match stream
                     .get_or_create_consumer(

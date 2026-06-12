@@ -4,24 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Async runtime
 tokio = { workspace = true }
-# NATS client
-async-nats = { version = "0.37.0" }
-# JSON serialization
+async-nats = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-# Logging and Observability
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["json"]}
-tracing-appender = "0.2"
-# Error handling
 anyhow = { workspace = true }
 parse-size = { workspace = true }
 futures = { workspace = true }
 rand = { workspace = true }
-tokio-util = { version = "0.7.13", features = ["time"] }
-tokio-stream = { version = "0.1.16", features = ["sync"] }
 clap = { workspace = true }
 url = { workspace = true }
+humantime = { workspace = true }
 utils = { path = "../dependencies/control-plane/utils/utils-lib" }
